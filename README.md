@@ -1,18 +1,18 @@
 # 🌐 KDE VPN/IP Info Widget
 
-A simple KDE Plasma widget setup to show your **public IP** and **VPN/WireGuard status** directly in your panel — with one-click detailed notifications.
+A complete setup for KDE Plasma showing **public IP** and **VPN/WireGuard status** directly in your panel — with tooltip and click interactions.
 
 ---
 
 ## 🧩 Features
 
 - Detects **WireGuard** and **NetworkManager VPNs**
-- Shows **flag + VPN shield icon** in the Plasma panel
-- Displays full details (city, ISP, coordinates) on click
+- Shows **flag + VPN shield icon** in your panel
+- Displays **detailed info** (city, ISP, coordinates) on click
+- Shows **active WireGuard interface name** on hover
 - Auto-refresh every second
-- Works with **IPv4 and IPv6 endpoints**
-- Supports **Mullvad**, **ipinfo.io**, and **ipapi.co**
-- Uses **Nerd Font icons** for elegant display
+- Works with **IPv4 + IPv6 endpoints**
+- Uses **Nerd Font icons**
 
 ---
 

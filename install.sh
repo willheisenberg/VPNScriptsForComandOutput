@@ -103,6 +103,7 @@ mkdir -p "$INSTALL_DIR"
 echo "📁 Copying scripts..."
 install -m 755 "$DIR/vpn_widget_command.sh" "$INSTALL_DIR/vpn_widget_command.sh"
 install -m 755 "$DIR/vpn_widget_click.sh" "$INSTALL_DIR/vpn_widget_click.sh"
+install -m 755 "$DIR/vpn_hover_info.sh" "$INSTALL_DIR/vpn_hover_info.sh"
 
 # --- Finishing message ---
 echo
@@ -115,7 +116,8 @@ echo "1️⃣ Install the Command Output Widget → https://github.com/Zren/plas
 echo "2️⃣ Add it to your KDE panel."
 echo "3️⃣ Set command:  bash $INSTALL_DIR/vpn_widget_command.sh"
 echo "4️⃣ Set refresh interval: 1 second"
-echo "5️⃣ Optional click action: bash $INSTALL_DIR/vpn_widget_click.sh"
+echo "5️⃣ Left click command: bash $INSTALL_DIR/vpn_widget_click.sh"
+echo "6️⃣ Tooltip hover command: bash $INSTALL_DIR/vpn_hover_info.sh"
 echo "---------------------------------------"
 echo "🎉 Done! Restart Plasma if needed:"
 echo "   kquitapp6 plasmashell && kstart6 plasmashell"
