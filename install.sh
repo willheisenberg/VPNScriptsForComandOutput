@@ -96,7 +96,7 @@ else
 fi
 
 # --- Prepare install paths ---
-INSTALL_DIR="$HOME/.local/share/vpn-widget"
+INSTALL_DIR="$HOME/.local/scripts/vpn-widget"
 mkdir -p "$INSTALL_DIR"
 
 # --- Copy scripts from same folder as installer ---
