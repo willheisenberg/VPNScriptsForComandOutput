@@ -19,7 +19,7 @@ A complete setup for KDE Plasma showing **public IP** and **VPN/WireGuard status
 ## ⚙️ Installation
 
 ```bash
-git clone https://github.com/yourusername/vpn-widget-plasma.git
+git clone https://github.com/willheisenberg/VPNScriptsForComandOutput
 cd vpn-widget-plasma
 chmod +x install.sh
 ./install.sh
