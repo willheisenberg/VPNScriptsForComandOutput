@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Show full IP/VPN info as KDE notification (WireGuard + NetworkManager)
-# Uses ipinfo.io for VPNs (handles Mullvad etc.), ipapi.co for local
+# Original logic preserved + Morocco-safe fallback
 
 # --- detect WireGuard endpoint ---
 endpoint_ip=$(wg show all endpoints 2>/dev/null | awk '{print $3}' | head -n1)
@@ -15,30 +15,27 @@ if [[ -n "$endpoint_ip" || -n "$nm_vpn_iface" ]]; then
 
     # --- clean endpoint: remove brackets + port safely ---
     if [[ "$endpoint_ip" =~ ^\[([0-9a-fA-F:]+)\](:[0-9]+)?$ ]]; then
-        # IPv6 form like [2a02:908:f000:7f::1eac]:51820
         endpoint_ip_clean="${BASH_REMATCH[1]}"
     elif [[ "$endpoint_ip" =~ ^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(:[0-9]+)?$ ]]; then
-        # IPv4 form like 185.213.155.2:51820
         endpoint_ip_clean="${BASH_REMATCH[1]}"
     else
-        # fallback, remove any port if present
         endpoint_ip_clean="${endpoint_ip%%:*}"
     fi
 
-    # --- API selection based on address type ---
+    # --- API selection based on address type (UNCHANGED LOGIC) ---
     if [[ "$endpoint_ip_clean" == *:* ]]; then
-        # IPv6 → ipapi (better support, no [])
         url="https://ipapi.co/${endpoint_ip_clean}/json"
         api="ipapi"
+        curl_opts=""
     elif [[ "$endpoint_ip_clean" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # IPv4 → ipinfo
         url="https://ipinfo.io/${endpoint_ip_clean}/json"
         api="ipinfo"
+        curl_opts=""
     else
         url="https://ipapi.co/json"
         api="ipapi"
+        curl_opts="-4"
     fi
-    curl_opts=""
 else
     vpn_state="inactive"
     url="https://ipapi.co/json"
@@ -49,10 +46,17 @@ fi
 # --- fetch data ---
 json=$(curl $curl_opts -fsS --max-time 5 "$url" 2>/dev/null)
 
-# --- fallback: if VPN mode and no valid data, retry with ipapi ---
-if [[ "$vpn_state" == "active" ]] && [[ -z "$json" || "$json" == *"error"* ]]; then
-    json=$(curl -fsS --max-time 5 https://ipapi.co/json 2>/dev/null)
-    api="ipapi"
+# --- HARD VALIDATION ---
+if ! jq -e '.ip // .query // .address' >/dev/null 2>&1 <<<"$json"; then
+    if [[ "$vpn_state" == "active" ]]; then
+        # VPN active but endpoint lookup failed → fallback to public IPv4
+        json=$(curl -4 -fsS --max-time 5 https://ipapi.co/json 2>/dev/null)
+        api="ipapi"
+    else
+        # Non-VPN fallback
+        json=$(curl -4 -fsS --max-time 5 https://ipwho.is/ 2>/dev/null)
+        api="ipapi"
+    fi
 fi
 
 # --- parse depending on API ---
