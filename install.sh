@@ -8,8 +8,9 @@ echo "This script will install all required dependencies:"
 echo "  • WireGuard + NetworkManager"
 echo "  • Mullvad VPN CLI (if available)"
 echo "  • jq, curl, python3"
-echo "  • Nerd Font (for icons)"
-echo "  • Plasma workspace tools"
+echo "  • Emoji/Noto fonts"
+echo "  • Nerd Font for shield glyphs"
+echo "  • Plasma widget packaging tools"
 echo
 
 # --- Locate script directory ---
@@ -95,29 +96,34 @@ else
     echo "⚠️ Mullvad CLI not found. Install manually: https://mullvad.net/download/app"
 fi
 
-# --- Prepare install paths ---
-INSTALL_DIR="$HOME/.local/scripts/vpn-widget"
-mkdir -p "$INSTALL_DIR"
+# --- Prepare plasmoid package ---
+PLASMOID_DIR="$DIR/plasmoid/package"
+chmod 755 "$PLASMOID_DIR/contents/bin/vpn_widget_backend.sh"
 
-# --- Copy scripts from same folder as installer ---
-echo "📁 Copying scripts..."
-install -m 755 "$DIR/vpn_widget_command.sh" "$INSTALL_DIR/vpn_widget_command.sh"
-install -m 755 "$DIR/vpn_widget_click.sh" "$INSTALL_DIR/vpn_widget_click.sh"
-install -m 755 "$DIR/vpn_hover_info.sh" "$INSTALL_DIR/vpn_hover_info.sh"
+# --- Clear cached widget state so icon/output updates apply immediately ---
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/vpn-widget" "/tmp/vpn-widget-${USER:-$(id -u)}" 2>/dev/null || true
+
+# --- Install / upgrade the real Plasma widget ---
+if command -v kpackagetool6 &>/dev/null; then
+    echo "🧩 Installing Plasma widget package..."
+    if ! kpackagetool6 -t Plasma/Applet -u "$PLASMOID_DIR" >/dev/null 2>&1; then
+        kpackagetool6 -t Plasma/Applet -i "$PLASMOID_DIR"
+    fi
+else
+    echo "⚠️ kpackagetool6 not found. The backend scripts were installed, but the Plasma widget package could not be registered."
+fi
 
 # --- Finishing message ---
 echo
 echo "✅ Installation complete!"
-echo "Scripts installed in: $INSTALL_DIR"
 echo
 echo "---------------------------------------"
-echo "To enable the widget:"
-echo "1️⃣ Install the Command Output Widget → https://github.com/Zren/plasma-applet-commandoutput"
-echo "2️⃣ Add it to your KDE panel."
-echo "3️⃣ Set command:  bash $INSTALL_DIR/vpn_widget_command.sh"
-echo "4️⃣ Set refresh interval: 1 second"
-echo "5️⃣ Left click command: bash $INSTALL_DIR/vpn_widget_click.sh"
-echo "6️⃣ Tooltip hover command: bash $INSTALL_DIR/vpn_hover_info.sh"
+echo "To enable the new widget:"
+echo "1️⃣ Right-click the panel → Add Widgets"
+echo "2️⃣ Search for: VPN Status"
+echo "3️⃣ Add it to the panel"
+echo
+echo "If the shield icons render as empty boxes, install any Nerd Font and restart Plasma."
 echo "---------------------------------------"
 echo "🎉 Done! Restart Plasma if needed:"
 echo "   kquitapp6 plasmashell && kstart6 plasmashell"

@@ -1,0 +1,20 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Will Heisenberg"
+            }
+        ],
+        "BugReportUrl": "https://github.com/willheisenberg/VPNScriptsForComandOutput/issues",
+        "Category": "Network",
+        "Description": "Shows VPN state, public IP and server location directly in the Plasma panel.",
+        "Icon": "network-vpn",
+        "Id": "com.github.willheisenberg.vpnstatus",
+        "License": "GPL-3.0-or-later",
+        "Name": "VPN Status",
+        "Version": "1.0.0",
+        "Website": "https://github.com/willheisenberg/VPNScriptsForComandOutput"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

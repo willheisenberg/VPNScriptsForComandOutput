@@ -1,0 +1,15 @@
+.codex
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Desktop / filesystem metadata
+.DS_Store
+.directory
+
+# Local logs
+*.log
