@@ -52,6 +52,14 @@ have_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+is_ipv4() {
+    [[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+is_ipv6() {
+    [[ "${1:-}" == *:* ]]
+}
+
 trim() {
     local value="${1:-}"
     value="${value#"${value%%[![:space:]]*}"}"
@@ -146,7 +154,20 @@ release_lock() {
 }
 
 fetch_url() {
+    local family="${1:-auto}"
+    shift
+
     have_command curl || return 1
+
+    local -a family_args=()
+    case "$family" in
+        4)
+            family_args=(-4)
+            ;;
+        6)
+            family_args=(-6)
+            ;;
+    esac
 
     curl \
         --silent \
@@ -156,6 +177,7 @@ fetch_url() {
         --connect-timeout 2 \
         --max-time 4 \
         --header 'Accept: application/json' \
+        "${family_args[@]}" \
         "$@" 2>/dev/null
 }
 
@@ -228,6 +250,7 @@ parse_ipinfo_record() {
 query_geo_record() {
     local mode="$1"
     local target="${2:-}"
+    local family="${3:-auto}"
     local provider=""
     local url=""
     local json=""
@@ -238,30 +261,30 @@ query_geo_record() {
     for provider in ipwho ipapi ipinfo; do
         case "$provider" in
             ipwho)
-                if [[ "$mode" == "current" ]]; then
+                if [[ "$mode" == "current" || "$mode" == "current4" || "$mode" == "current6" ]]; then
                     url="https://ipwho.is/"
                 else
                     url="https://ipwho.is/${target}"
                 fi
-                json="$(fetch_url "$url" || true)"
+                json="$(fetch_url "$family" "$url" || true)"
                 record="$(parse_ipwho_record "$json" || true)"
                 ;;
             ipapi)
-                if [[ "$mode" == "current" ]]; then
+                if [[ "$mode" == "current" || "$mode" == "current4" || "$mode" == "current6" ]]; then
                     url="https://ipapi.co/json/"
                 else
                     url="https://ipapi.co/${target}/json/"
                 fi
-                json="$(fetch_url "$url" || true)"
+                json="$(fetch_url "$family" "$url" || true)"
                 record="$(parse_ipapi_record "$json" || true)"
                 ;;
             ipinfo)
-                if [[ "$mode" == "current" ]]; then
+                if [[ "$mode" == "current" || "$mode" == "current4" || "$mode" == "current6" ]]; then
                     url="https://ipinfo.io/json"
                 else
                     url="https://ipinfo.io/${target}/json"
                 fi
-                json="$(fetch_url "$url" || true)"
+                json="$(fetch_url "$family" "$url" || true)"
                 record="$(parse_ipinfo_record "$json" || true)"
                 ;;
         esac
@@ -398,12 +421,14 @@ get_mullvad_state() {
 
 build_state_json() {
     local default_iface vpn_active vpn_backend vpn_name vpn_type vpn_iface full_tunnel
-    local endpoint_ip route_record endpoint_record
+    local endpoint_ip route_record route4_record route6_record endpoint_record
     local route_provider route_ip route_city route_region route_country_name route_country_code route_org route_lat route_lon route_postal
+    local route4_provider route4_ip route4_city route4_region route4_country_name route4_country_code route4_org route4_lat route4_lon route4_postal
+    local route6_provider route6_ip route6_city route6_region route6_country_name route6_country_code route6_org route6_lat route6_lon route6_postal
     local endpoint_provider endpoint_geo_ip endpoint_city endpoint_region endpoint_country_name endpoint_country_code endpoint_org endpoint_lat endpoint_lon endpoint_postal
     local display_provider display_ip display_city display_region display_country_name display_country_code display_org display_lat display_lon display_postal display_source
     local vpn_mode status_label status_detail icon_name icon_symbol flag location_text summary updated_at
-    local route_summary endpoint_summary detail_text public_ip
+    local route_summary route4_summary route6_summary endpoint_summary detail_text public_ip public_ipv4 public_ipv6
     local mullvad_state=unknown
 
     default_iface="$(get_default_interface)"
@@ -454,10 +479,70 @@ build_state_json() {
     route_lat=""
     route_lon=""
     route_postal=""
+    route4_provider=""
+    route4_ip=""
+    route4_city=""
+    route4_region=""
+    route4_country_name=""
+    route4_country_code=""
+    route4_org=""
+    route4_lat=""
+    route4_lon=""
+    route4_postal=""
+    route6_provider=""
+    route6_ip=""
+    route6_city=""
+    route6_region=""
+    route6_country_name=""
+    route6_country_code=""
+    route6_org=""
+    route6_lat=""
+    route6_lon=""
+    route6_postal=""
 
     if [[ -n "$route_record" ]]; then
         IFS=$'\t' read -r route_provider route_ip route_city route_region route_country_name route_country_code route_org route_lat route_lon route_postal <<<"$route_record"
         route_country_code="$(normalize_country_code "$route_country_code")"
+    fi
+
+    if is_ipv4 "$route_ip"; then
+        route4_provider="$route_provider"
+        route4_ip="$route_ip"
+        route4_city="$route_city"
+        route4_region="$route_region"
+        route4_country_name="$route_country_name"
+        route4_country_code="$route_country_code"
+        route4_org="$route_org"
+        route4_lat="$route_lat"
+        route4_lon="$route_lon"
+        route4_postal="$route_postal"
+    elif is_ipv6 "$route_ip"; then
+        route6_provider="$route_provider"
+        route6_ip="$route_ip"
+        route6_city="$route_city"
+        route6_region="$route_region"
+        route6_country_name="$route_country_name"
+        route6_country_code="$route_country_code"
+        route6_org="$route_org"
+        route6_lat="$route_lat"
+        route6_lon="$route_lon"
+        route6_postal="$route_postal"
+    fi
+
+    if [[ -z "$route4_ip" ]]; then
+        route4_record="$(query_geo_record current4 "" 4 || true)"
+        if [[ -n "$route4_record" ]]; then
+            IFS=$'\t' read -r route4_provider route4_ip route4_city route4_region route4_country_name route4_country_code route4_org route4_lat route4_lon route4_postal <<<"$route4_record"
+            route4_country_code="$(normalize_country_code "$route4_country_code")"
+        fi
+    fi
+
+    if [[ -z "$route6_ip" && -n "$route4_ip" ]]; then
+        route6_record="$(query_geo_record current6 "" 6 || true)"
+        if [[ -n "$route6_record" ]]; then
+            IFS=$'\t' read -r route6_provider route6_ip route6_city route6_region route6_country_name route6_country_code route6_org route6_lat route6_lon route6_postal <<<"$route6_record"
+            route6_country_code="$(normalize_country_code "$route6_country_code")"
+        fi
     fi
 
     endpoint_provider=""
@@ -517,7 +602,9 @@ build_state_json() {
         display_source="vpn-endpoint"
     fi
 
-    public_ip="$route_ip"
+    public_ipv4="$route4_ip"
+    public_ipv6="$route6_ip"
+    public_ip="${public_ipv4:-${route_ip:-$public_ipv6}}"
     location_text="$(join_with_comma "$display_city" "$display_region" "$display_country_name")"
 
     if [[ -z "$display_country_name" && -n "$display_country_code" ]]; then
@@ -550,9 +637,13 @@ build_state_json() {
     updated_at="$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
 
     route_summary="$(join_with_comma "$route_city" "$route_region" "$route_country_name")"
+    route4_summary="$(join_with_comma "$route4_city" "$route4_region" "$route4_country_name")"
+    route6_summary="$(join_with_comma "$route6_city" "$route6_region" "$route6_country_name")"
     endpoint_summary="$(join_with_comma "$endpoint_city" "$endpoint_region" "$endpoint_country_name")"
 
-    detail_text="IP: ${public_ip:-?}
+    detail_text="IPv4: ${public_ipv4:-n/a}
+IPv6: ${public_ipv6:-n/a}
+Bevorzugte IP: ${public_ip:-?}
 Standort: ${location_text}
 Interface: ${vpn_iface:-${default_iface:-?}}
 VPN-Modus: ${vpn_mode}
@@ -581,6 +672,28 @@ Provider: ${display_org:-n/a}"
         --arg route_lon "$route_lon" \
         --arg route_postal "$route_postal" \
         --arg route_summary "$route_summary" \
+        --arg route4_provider "$route4_provider" \
+        --arg route4_ip "$route4_ip" \
+        --arg route4_city "$route4_city" \
+        --arg route4_region "$route4_region" \
+        --arg route4_country_name "$route4_country_name" \
+        --arg route4_country_code "$route4_country_code" \
+        --arg route4_org "$route4_org" \
+        --arg route4_lat "$route4_lat" \
+        --arg route4_lon "$route4_lon" \
+        --arg route4_postal "$route4_postal" \
+        --arg route4_summary "$route4_summary" \
+        --arg route6_provider "$route6_provider" \
+        --arg route6_ip "$route6_ip" \
+        --arg route6_city "$route6_city" \
+        --arg route6_region "$route6_region" \
+        --arg route6_country_name "$route6_country_name" \
+        --arg route6_country_code "$route6_country_code" \
+        --arg route6_org "$route6_org" \
+        --arg route6_lat "$route6_lat" \
+        --arg route6_lon "$route6_lon" \
+        --arg route6_postal "$route6_postal" \
+        --arg route6_summary "$route6_summary" \
         --arg endpoint_provider "$endpoint_provider" \
         --arg endpoint_geo_ip "$endpoint_geo_ip" \
         --arg endpoint_city "$endpoint_city" \
@@ -612,6 +725,8 @@ Provider: ${display_org:-n/a}"
         --arg icon_symbol "$icon_symbol" \
         --arg detail_text "$detail_text" \
         --arg public_ip "$public_ip" \
+        --arg public_ipv4 "$public_ipv4" \
+        --arg public_ipv6 "$public_ipv6" \
         --argjson vpn_active "$(json_bool "$vpn_active")" \
         --argjson full_tunnel "$(json_bool "$full_tunnel")" \
         '{
@@ -627,6 +742,8 @@ Provider: ${display_org:-n/a}"
             default_iface: $default_iface,
             endpoint_ip: $endpoint_ip,
             public_ip: $public_ip,
+            public_ipv4: $public_ipv4,
+            public_ipv6: $public_ipv6,
             display_source: $display_source,
             display_provider: $display_provider,
             display_ip: $display_ip,
@@ -659,6 +776,32 @@ Provider: ${display_org:-n/a}"
                 lon: $route_lon,
                 postal: $route_postal,
                 summary: $route_summary
+            },
+            route4: {
+                provider: $route4_provider,
+                ip: $route4_ip,
+                city: $route4_city,
+                region: $route4_region,
+                country_name: $route4_country_name,
+                country_code: $route4_country_code,
+                org: $route4_org,
+                lat: $route4_lat,
+                lon: $route4_lon,
+                postal: $route4_postal,
+                summary: $route4_summary
+            },
+            route6: {
+                provider: $route6_provider,
+                ip: $route6_ip,
+                city: $route6_city,
+                region: $route6_region,
+                country_name: $route6_country_name,
+                country_code: $route6_country_code,
+                org: $route6_org,
+                lat: $route6_lat,
+                lon: $route6_lon,
+                postal: $route6_postal,
+                summary: $route6_summary
             },
             endpoint: {
                 provider: $endpoint_provider,
@@ -725,7 +868,8 @@ emit_tooltip() {
                 else "Unbekannt"
                 end
             )),
-            ("IP: " + (if (.public_ip | length) > 0 then .public_ip else "?" end)),
+            ("IPv4: " + (if (.public_ipv4 | length) > 0 then .public_ipv4 else "n/a" end)),
+            ("IPv6: " + (if (.public_ipv6 | length) > 0 then .public_ipv6 else "n/a" end)),
             ("Interface: " + (if (.vpn_iface | length) > 0 then .vpn_iface elif (.default_iface | length) > 0 then .default_iface else "?" end)),
             ("Endpoint: " + (if (.endpoint_ip | length) > 0 then .endpoint_ip else "n/a" end))
         ] | join("\n")

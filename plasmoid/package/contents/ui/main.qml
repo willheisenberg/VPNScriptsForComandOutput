@@ -32,6 +32,8 @@ PlasmoidItem {
         display_country_code: "",
         display_org: "",
         public_ip: "",
+        public_ipv4: "",
+        public_ipv6: "",
         display_source: "",
         display_lat: "",
         display_lon: "",
@@ -221,13 +223,35 @@ PlasmoidItem {
                     rowSpacing: Kirigami.Units.smallSpacing
 
                     PlasmaComponents3.Label {
-                        text: i18n("Öffentliche IP")
+                        text: i18n("Bevorzugte IP")
                         opacity: 0.7
                     }
 
                     PlasmaComponents3.Label {
                         Layout.fillWidth: true
                         text: root.state.public_ip || "?"
+                        wrapMode: Text.WrapAnywhere
+                    }
+
+                    PlasmaComponents3.Label {
+                        text: i18n("Öffentliche IPv4")
+                        opacity: 0.7
+                    }
+
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        text: root.state.public_ipv4 || i18n("n/a")
+                        wrapMode: Text.WrapAnywhere
+                    }
+
+                    PlasmaComponents3.Label {
+                        text: i18n("Öffentliche IPv6")
+                        opacity: 0.7
+                    }
+
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        text: root.state.public_ipv6 || i18n("n/a")
                         wrapMode: Text.WrapAnywhere
                     }
 
