@@ -28,6 +28,7 @@ PlasmoidItem {
         full_tunnel: false,
         status_label: "VPN Status",
         status_detail: "Noch keine Daten",
+        vpn_name: "",
         display_country_name: "",
         display_country_code: "",
         display_org: "",
@@ -66,8 +67,9 @@ PlasmoidItem {
     hideOnWindowDeactivate: true
     switchWidth: Kirigami.Units.gridUnit * 18
     switchHeight: Kirigami.Units.gridUnit * 18
-    toolTipMainText: state.status_label || i18n("VPN Status")
+    toolTipMainText: state.vpn_active && state.vpn_name ? i18n("VPN: %1", state.vpn_name) : (state.status_label || i18n("VPN Status"))
     toolTipSubText: [
+        state.vpn_active ? (state.full_tunnel ? i18n("Full Tunnel") : i18n("Split Tunnel")) : "",
         displayLocationText(),
         state.public_ip ? i18n("IP: %1", state.public_ip) : i18n("IP: unbekannt"),
         state.vpn_iface || state.default_iface ? i18n("Interface: %1", state.vpn_iface || state.default_iface) : "",
@@ -78,18 +80,70 @@ PlasmoidItem {
         id: executor
     }
 
-    Timer {
-        interval: 20000
-        running: true
-        repeat: true
-        onTriggered: root.refresh(false)
+    // A stuck backend must not stall the cheap change detection, so the
+    // fingerprint probe gets its own queue.
+    ExecUtil {
+        id: prober
+
+        timeoutMs: 10000
+        maxQueueLength: 1
     }
 
-    function backendCommand(force) {
-        let command = shellQuote(backendPath) + " --json"
+    property string networkFingerprint: ""
+
+    Timer {
+        // ~19ms of local work per tick, no network traffic at all.
+        interval: 3000
+        running: true
+        repeat: true
+        onTriggered: root.probeNetwork()
+    }
+
+    function probeNetwork() {
+        prober.exec(
+            "if [ -x " + shellQuote(backendPath) + " ]; then " +
+                shellQuote(backendPath) + " --fingerprint" +
+            "; fi",
+            function(stdout, exitCode) {
+                const fingerprint = String(stdout).trim()
+
+                if (exitCode !== 0 || !fingerprint) {
+                    return
+                }
+                if (root.networkFingerprint === fingerprint) {
+                    return
+                }
+
+                const first = root.networkFingerprint === ""
+                root.networkFingerprint = fingerprint
+
+                // Interfaces, default routes or the WireGuard peer changed:
+                // recompute now instead of waiting for the next timer tick.
+                if (!first) {
+                    root.refresh(false, true)
+                }
+            }
+        )
+    }
+
+    function backendEnvironment() {
+        return [
+            ["VPN_WIDGET_IPGEO_KEY", Plasmoid.configuration.ipgeoKey],
+            ["VPN_WIDGET_IPINFO_TOKEN", Plasmoid.configuration.ipinfoToken],
+            ["VPN_WIDGET_IPAPI_KEY", Plasmoid.configuration.ipapiKey],
+        ].filter(entry => entry[1])
+         .map(entry => entry[0] + "=" + shellQuote(String(entry[1]).trim()))
+         .join(" ")
+    }
+
+    function backendCommand(force, skipStateCache) {
+        const environment = backendEnvironment()
+        let command = (environment ? environment + " " : "") + shellQuote(backendPath) + " --json"
 
         if (force) {
             command += " --force"
+        } else if (skipStateCache) {
+            command += " --no-cache"
         }
 
         command = "if [ -x " + shellQuote(backendPath) + " ]; then " +
@@ -100,6 +154,21 @@ PlasmoidItem {
 
     function shellQuote(value) {
         return "'" + String(value).replace(/'/g, "'\"'\"'") + "'"
+    }
+
+    function providerText(providerName) {
+        switch (providerName) {
+        case "ipwho":
+            return "ipwho.is"
+        case "ipgeo":
+            return "ipgeolocation.io"
+        case "ipapi":
+            return "ipapi.co"
+        case "ipinfo":
+            return "ipinfo.io"
+        default:
+            return providerName || i18n("unbekannt")
+        }
     }
 
     function sourceText(sourceName) {
@@ -121,10 +190,10 @@ PlasmoidItem {
         return state.location_text
     }
 
-    function refresh(force) {
+    function refresh(force, skipStateCache) {
         loading = true
 
-        executor.exec(backendCommand(force), function(stdout, exitCode, exitStatus, stderr) {
+        executor.exec(backendCommand(force, skipStateCache), function(stdout, exitCode, exitStatus, stderr) {
             loading = false
 
             if (exitCode !== 0 || exitStatus !== 0) {
@@ -141,7 +210,10 @@ PlasmoidItem {
         })
     }
 
-    Component.onCompleted: refresh(false)
+    Component.onCompleted: {
+        refresh(false)
+        probeNetwork()
+    }
     onExpandedChanged: {
         if (expanded) {
             refresh(false)
@@ -159,53 +231,150 @@ PlasmoidItem {
         }
     }
 
+    component SectionHeader: PlasmaComponents3.Label {
+        Layout.fillWidth: true
+        Layout.topMargin: Kirigami.Units.smallSpacing
+        font.pointSize: Kirigami.Theme.smallFont.pointSize
+        font.capitalization: Font.AllUppercase
+        font.letterSpacing: 0.5
+        font.bold: true
+        opacity: 0.6
+        elide: Text.ElideRight
+    }
+
+    component InfoRow: RowLayout {
+        id: infoRow
+
+        property string label: ""
+        property string value: ""
+        property bool wrapAnywhere: false
+
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.largeSpacing
+
+        PlasmaComponents3.Label {
+            text: infoRow.label
+            opacity: 0.7
+            Layout.alignment: Qt.AlignLeft | Qt.AlignTop
+        }
+
+        PlasmaComponents3.Label {
+            text: infoRow.value
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignRight | Qt.AlignTop
+            horizontalAlignment: Text.AlignRight
+            wrapMode: infoRow.wrapAnywhere ? Text.WrapAnywhere : Text.WordWrap
+        }
+    }
+
     fullRepresentation: PlasmaExtras.Representation {
+        id: fullRep
+
+        readonly property string tunnelText: root.state.full_tunnel
+            ? i18n("Full Tunnel")
+            : i18n("Split Tunnel")
+        readonly property string endpointSummary: root.state.endpoint.summary
+            && root.state.endpoint.summary !== "Unknown"
+            ? root.state.endpoint.summary
+            : ""
+        readonly property string routeSummary: root.state.route.summary
+            && root.state.route.summary !== "Unknown"
+            ? root.state.route.summary
+            : ""
+
         collapseMarginsHint: true
 
+        Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        Layout.preferredHeight: mainLayout.implicitHeight + Kirigami.Units.gridUnit * 2
+        Layout.minimumWidth: Layout.preferredWidth
+        Layout.maximumWidth: Layout.preferredWidth
+        Layout.minimumHeight: Layout.preferredHeight
+        Layout.maximumHeight: Layout.preferredHeight
+
         PlasmaComponents3.ScrollView {
+            id: scrollView
             anchors.fill: parent
+            contentWidth: availableWidth
+            QQC2.ScrollBar.horizontal.policy: QQC2.ScrollBar.AlwaysOff
 
             ColumnLayout {
-                width: parent.width
-                spacing: Kirigami.Units.largeSpacing
+                id: mainLayout
+
+                readonly property int sideMargin: Kirigami.Units.gridUnit
+
+                x: sideMargin
+                y: Kirigami.Units.gridUnit
+                width: scrollView.availableWidth - sideMargin * 2
+                spacing: Kirigami.Units.smallSpacing
 
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
                     spacing: Kirigami.Units.largeSpacing
 
                     PlasmaComponents3.Label {
                         text: root.state.icon_symbol || "󰒘"
                         font.family: root.glyphFontFamily
-                        font.pixelSize: Kirigami.Units.iconSizes.large
-                        Layout.alignment: Qt.AlignTop
+                        font.pixelSize: Kirigami.Units.iconSizes.medium
+                        Layout.alignment: Qt.AlignVCenter
                     }
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing / 2
+                        spacing: 0
 
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
                             text: root.state.status_label || i18n("VPN Status")
                             font.bold: true
-                            wrapMode: Text.WordWrap
+                            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.15
+                            elide: Text.ElideRight
                         }
 
-                        PlasmaComponents3.Label {
+                        RowLayout {
                             Layout.fillWidth: true
-                            text: [
-                                root.state.flag || "??",
-                                root.displayLocationText(),
-                            ].filter(Boolean).join("  ")
-                            wrapMode: Text.WordWrap
-                            opacity: 0.8
+                            spacing: Kirigami.Units.smallSpacing
+
+                            PlasmaComponents3.Label {
+                                text: [
+                                    root.state.flag,
+                                    root.state.vpn_active ? root.state.vpn_name : "",
+                                ].filter(Boolean).join("  ")
+                                opacity: 0.7
+                                elide: Text.ElideRight
+                            }
+
+                            PlasmaComponents3.Label {
+                                text: "·"
+                                opacity: 0.4
+                                visible: root.state.vpn_active
+                            }
+
+                            PlasmaComponents3.Label {
+                                text: fullRep.tunnelText
+                                // Split tunnel means most traffic bypasses the VPN — worth flagging.
+                                color: root.state.full_tunnel
+                                    ? Kirigami.Theme.positiveTextColor
+                                    : Kirigami.Theme.neutralTextColor
+                                visible: root.state.vpn_active
+                                elide: Text.ElideRight
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
                         }
                     }
 
-                    QQC2.Button {
+                    QQC2.ToolButton {
                         icon.name: "view-refresh"
-                        text: i18n("Aktualisieren")
+                        display: QQC2.AbstractButton.IconOnly
+                        Layout.alignment: Qt.AlignVCenter
                         onClicked: root.refresh(true)
+
+                        QQC2.ToolTip.text: i18n("Aktualisieren")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     }
                 }
 
@@ -216,169 +385,108 @@ PlasmoidItem {
                     text: root.errorText
                 }
 
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: 2
-                    columnSpacing: Kirigami.Units.largeSpacing
-                    rowSpacing: Kirigami.Units.smallSpacing
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Bevorzugte IP")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.public_ip || "?"
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Öffentliche IPv4")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.public_ipv4 || i18n("n/a")
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Öffentliche IPv6")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.public_ipv6 || i18n("n/a")
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Quelle")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.sourceText(root.state.display_source)
-                        wrapMode: Text.WordWrap
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Ort")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.displayLocationText()
-                        wrapMode: Text.WordWrap
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Provider")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.display_org || "?"
-                        wrapMode: Text.WordWrap
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("VPN-Interface")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.vpn_iface || root.state.default_iface || "?"
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Endpoint")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.endpoint_ip || i18n("n/a")
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Koordinaten")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: (root.state.display_lat || root.state.display_lon)
-                            ? `${root.state.display_lat}, ${root.state.display_lon}`
-                            : i18n("n/a")
-                        wrapMode: Text.WordWrap
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("PLZ")
-                        opacity: 0.7
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.display_postal || i18n("n/a")
-                        wrapMode: Text.WordWrap
-                    }
+                SectionHeader {
+                    text: i18n("Adresse")
                 }
 
-                Kirigami.Separator {
-                    Layout.fillWidth: true
+                InfoRow {
+                    label: i18n("IPv4")
+                    value: root.state.public_ipv4 || i18n("n/a")
+                    wrapAnywhere: true
                 }
 
-                ColumnLayout {
+                InfoRow {
+                    label: i18n("IPv6")
+                    value: root.state.public_ipv6 || i18n("n/a")
+                    wrapAnywhere: true
+                }
+
+                SectionHeader {
+                    text: root.state.display_source === "vpn-endpoint"
+                        ? i18n("Standort (VPN-Endpoint)")
+                        : i18n("Standort (öffentliche Route)")
+                }
+
+                InfoRow {
+                    label: i18n("Ort")
+                    value: root.displayLocationText()
+                }
+
+                InfoRow {
+                    label: i18n("Provider")
+                    value: root.state.display_org || i18n("n/a")
+                }
+
+                InfoRow {
+                    label: i18n("Koordinaten")
+                    value: (root.state.display_lat || root.state.display_lon)
+                        ? `${root.state.display_lat}, ${root.state.display_lon}`
+                        : i18n("n/a")
+                }
+
+                InfoRow {
+                    label: i18n("PLZ")
+                    value: root.state.display_postal || i18n("n/a")
+                }
+
+                InfoRow {
+                    // The fallback chain can hand back a different city, so name
+                    // the service the numbers above actually came from.
+                    label: i18n("Datenquelle")
+                    value: root.providerText(root.state.display_provider)
+                    visible: !!root.state.display_provider
+                }
+
+                SectionHeader {
+                    text: i18n("Tunnel")
+                }
+
+                InfoRow {
+                    label: i18n("Verbindung")
+                    value: root.state.vpn_name
+                    // Redundant whenever NetworkManager names the connection after the device.
+                    visible: root.state.vpn_active
+                        && !!root.state.vpn_name
+                        && root.state.vpn_name !== root.state.vpn_iface
+                }
+
+                InfoRow {
+                    label: i18n("Interface")
+                    value: root.state.vpn_iface || root.state.default_iface || i18n("n/a")
+                    wrapAnywhere: true
+                }
+
+                InfoRow {
+                    label: i18n("Endpoint")
+                    value: root.state.endpoint_ip
+                    wrapAnywhere: true
+                    visible: !!root.state.endpoint_ip
+                }
+
+                InfoRow {
+                    label: i18n("Endpoint-Standort")
+                    value: fullRep.endpointSummary
+                    visible: !!fullRep.endpointSummary
+                        && fullRep.endpointSummary !== root.state.location_text
+                }
+
+                InfoRow {
+                    label: i18n("Routen-Standort")
+                    value: fullRep.routeSummary
+                    visible: !!fullRep.routeSummary
+                        && fullRep.routeSummary !== root.state.location_text
+                }
+
+                PlasmaComponents3.Label {
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    PlasmaComponents3.Label {
-                        text: i18n("Routen-Standort")
-                        font.bold: true
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.route.summary && root.state.route.summary !== "Unknown"
-                            ? root.state.route.summary
-                            : i18n("Keine Daten")
-                        wrapMode: Text.WordWrap
-                        opacity: 0.8
-                    }
-
-                    PlasmaComponents3.Label {
-                        text: i18n("VPN-Endpoint-Standort")
-                        font.bold: true
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.endpoint.summary && root.state.endpoint.summary !== "Unknown"
-                            ? root.state.endpoint.summary
-                            : i18n("Keine Daten")
-                        wrapMode: Text.WordWrap
-                        opacity: 0.8
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.state.updated_at
-                            ? i18n("Zuletzt aktualisiert: %1", root.state.updated_at)
-                            : ""
-                        wrapMode: Text.WordWrap
-                        opacity: 0.6
-                    }
+                    Layout.topMargin: Kirigami.Units.largeSpacing
+                    text: root.state.updated_at
+                        ? i18n("Zuletzt aktualisiert: %1", root.state.updated_at)
+                        : ""
+                    visible: text.length > 0
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    opacity: 0.5
+                    elide: Text.ElideRight
                 }
             }
         }

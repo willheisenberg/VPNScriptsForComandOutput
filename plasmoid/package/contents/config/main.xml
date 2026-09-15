@@ -10,4 +10,16 @@
       <default>100</default>
     </entry>
   </group>
+
+  <group name="Providers">
+    <entry name="ipgeoKey" type="String">
+      <default></default>
+    </entry>
+    <entry name="ipinfoToken" type="String">
+      <default></default>
+    </entry>
+    <entry name="ipapiKey" type="String">
+      <default></default>
+    </entry>
+  </group>
 </kcfg>
